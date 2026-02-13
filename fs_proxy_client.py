@@ -276,6 +276,7 @@ class StreamingProxyHTTPHandler(ProxyHTTPHandler):
 
 
 def main():
+    global REQUEST_TIMEOUT
     parser = argparse.ArgumentParser(description="Filesystem Proxy Client")
     parser.add_argument("--queue-dir", default=DEFAULT_QUEUE_DIR, help="Shared drive queue directory")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Local port to listen on")
@@ -283,7 +284,6 @@ def main():
     parser.add_argument("--streaming", action="store_true", help="Enable SSE streaming support")
     args = parser.parse_args()
 
-    global REQUEST_TIMEOUT
     REQUEST_TIMEOUT = args.timeout
 
     proxy = FileSystemProxy(args.queue_dir)
