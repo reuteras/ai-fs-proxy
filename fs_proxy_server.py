@@ -8,6 +8,7 @@ AI model API (OpenAI-compatible), and writes responses back as files.
 Usage:
     python fs_proxy_server.py --queue-dir H:\queue --api-base http://ai-model:11434/v1
     python fs_proxy_server.py --queue-dir H:\queue --api-base http://ai-model:11434/v1 --api-key sk-...
+    python fs_proxy_server.py --queue-dir H:\queue --api-base https://ai-model/v1 --ignore-cert-errors
 """
 
 import argparse
@@ -16,6 +17,7 @@ import os
 import time
 import logging
 import threading
+import urllib3
 import requests
 from pathlib import Path
 from datetime import datetime, timezone
@@ -39,7 +41,8 @@ REQUEST_TIMEOUT = 120        # timeout for upstream HTTP requests
 class FileSystemProxyServer:
     """Watches for request files and forwards them to the AI model API."""
 
-    def __init__(self, queue_dir: str, api_base: str, api_key: str | None = None):
+    def __init__(self, queue_dir: str, api_base: str, api_key: str | None = None,
+                 ignore_cert_errors: bool = False):
         self.queue_dir = Path(queue_dir)
         self.requests_dir = self.queue_dir / "requests"
         self.responses_dir = self.queue_dir / "responses"
@@ -58,6 +61,11 @@ class FileSystemProxyServer:
         self.session = requests.Session()
         if self.api_key:
             self.session.headers["Authorization"] = f"Bearer {self.api_key}"
+
+        if ignore_cert_errors:
+            self.session.verify = False
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            log.warning("TLS certificate verification is disabled")
 
         log.info(f"Queue directory: {self.queue_dir}")
         log.info(f"API base: {self.api_base}")
@@ -226,12 +234,15 @@ def main():
     parser.add_argument("--api-base", default=DEFAULT_API_BASE, help="AI model API base URL")
     parser.add_argument("--api-key", default=os.environ.get("OPENAI_API_KEY"), help="API key (or set OPENAI_API_KEY env var)")
     parser.add_argument("--cleanup-interval", type=int, default=300, help="Stale file cleanup interval in seconds")
+    parser.add_argument("--ignore-cert-errors", action="store_true",
+                        help="Disable TLS certificate verification for upstream API requests")
     args = parser.parse_args()
 
     server = FileSystemProxyServer(
         queue_dir=args.queue_dir,
         api_base=args.api_base,
         api_key=args.api_key,
+        ignore_cert_errors=args.ignore_cert_errors,
     )
 
     # Periodic cleanup thread
