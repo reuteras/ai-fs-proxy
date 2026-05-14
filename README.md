@@ -6,13 +6,13 @@ Tunnels OpenAI-compatible API requests through a shared filesystem (e.g. a mappe
 
 ```
 ┌─────────────────────┐                          ┌─────────────────────┐
-│   DFIR Sandbox       │                          │   Proxy Machine     │
-│                      │    H:\queue\requests\    │                     │
-│   AI Agent           │    ─────────────────▶    │   fs_proxy_server   │──▶ AI Model API
-│     ▼                │                          │                     │
-│   localhost:8080     │    H:\queue\responses\   │                     │
-│     ▼                │    ◀─────────────────    │                     │
-│   fs_proxy_client    │                          │                     │
+│   DFIR Sandbox      │                          │   Proxy Machine     │
+│                     │    H:\queue\requests\    │                     │
+│   AI Agent          │    ─────────────────▶    │   fs_proxy_server   │──▶ AI Model API
+│     ▼               │                          │                     │
+│   localhost:8080    │    H:\queue\responses\   │                     │
+│     ▼               │    ◀─────────────────    │                     │
+│   fs_proxy_clien    │                          │                     │
 └─────────────────────┘                          └─────────────────────┘
 ```
 
