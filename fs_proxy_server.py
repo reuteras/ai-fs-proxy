@@ -34,16 +34,21 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 DEFAULT_QUEUE_DIR = r"H:\queue"
 DEFAULT_API_BASE = "http://localhost:11434/v1"
-POLL_INTERVAL = 0.3          # seconds between scanning for new requests
-MAX_WORKERS = 4              # concurrent request handlers
-REQUEST_TIMEOUT = 120        # timeout for upstream HTTP requests
+POLL_INTERVAL = 0.3  # seconds between scanning for new requests
+MAX_WORKERS = 4  # concurrent request handlers
+REQUEST_TIMEOUT = 120  # timeout for upstream HTTP requests
 
 
 class FileSystemProxyServer:
     """Watches for request files and forwards them to the AI model API."""
 
-    def __init__(self, queue_dir: str, api_base: str, api_key: str | None = None,
-                 ignore_cert_errors: bool = False):
+    def __init__(
+        self,
+        queue_dir: str,
+        api_base: str,
+        api_key: str | None = None,
+        ignore_cert_errors: bool = False,
+    ):
         self.queue_dir = Path(queue_dir)
         self.requests_dir = self.queue_dir / "requests"
         self.responses_dir = self.queue_dir / "responses"
@@ -101,7 +106,9 @@ class FileSystemProxyServer:
             log.error(f"Error processing {request_id}: {e}")
             self._write_error_response(request_id, str(e))
 
-    def _handle_normal(self, request_id: str, method: str, url: str, headers: dict, body: str | None):
+    def _handle_normal(
+        self, request_id: str, method: str, url: str, headers: dict, body: str | None
+    ):
         """Handle a normal (non-streaming) request."""
         response = self.session.request(
             method=method,
@@ -129,7 +136,9 @@ class FileSystemProxyServer:
 
         log.info(f"Response {request_id} written (HTTP {response.status_code})")
 
-    def _handle_streaming(self, request_id: str, method: str, url: str, headers: dict, body: str | None):
+    def _handle_streaming(
+        self, request_id: str, method: str, url: str, headers: dict, body: str | None
+    ):
         """Handle a streaming (SSE) request by writing chunk files."""
         response = self.session.request(
             method=method,
@@ -144,7 +153,13 @@ class FileSystemProxyServer:
         meta_file = self.responses_dir / f"{request_id}-meta.json"
         tmp_file = self.responses_dir / f"{request_id}-meta.tmp"
         with open(tmp_file, "w", encoding="utf-8") as f:
-            json.dump({"status_code": response.status_code, "headers": dict(response.headers)}, f)
+            json.dump(
+                {
+                    "status_code": response.status_code,
+                    "headers": dict(response.headers),
+                },
+                f,
+            )
         tmp_file.rename(meta_file)
 
         seq = 0
@@ -180,12 +195,14 @@ class FileSystemProxyServer:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "status_code": 502,
             "headers": {"Content-Type": "application/json"},
-            "body": json.dumps({
-                "error": {
-                    "message": f"Proxy error: {error_msg}",
-                    "type": "proxy_error",
+            "body": json.dumps(
+                {
+                    "error": {
+                        "message": f"Proxy error: {error_msg}",
+                        "type": "proxy_error",
+                    }
                 }
-            }),
+            ),
         }
         resp_file = self.responses_dir / f"{request_id}.json"
         tmp_file = self.responses_dir / f"{request_id}.tmp"
@@ -233,12 +250,28 @@ class FileSystemProxyServer:
 
 def main():
     parser = argparse.ArgumentParser(description="Filesystem Proxy Server")
-    parser.add_argument("--queue-dir", default=DEFAULT_QUEUE_DIR, help="Shared drive queue directory")
-    parser.add_argument("--api-base", default=DEFAULT_API_BASE, help="AI model API base URL")
-    parser.add_argument("--api-key", default=os.environ.get("OPENAI_API_KEY"), help="API key (or set OPENAI_API_KEY env var)")
-    parser.add_argument("--cleanup-interval", type=int, default=300, help="Stale file cleanup interval in seconds")
-    parser.add_argument("--ignore-cert-errors", action="store_true",
-                        help="Disable TLS certificate verification for upstream API requests")
+    parser.add_argument(
+        "--queue-dir", default=DEFAULT_QUEUE_DIR, help="Shared drive queue directory"
+    )
+    parser.add_argument(
+        "--api-base", default=DEFAULT_API_BASE, help="AI model API base URL"
+    )
+    parser.add_argument(
+        "--api-key",
+        default=os.environ.get("OPENAI_API_KEY"),
+        help="API key (or set OPENAI_API_KEY env var)",
+    )
+    parser.add_argument(
+        "--cleanup-interval",
+        type=int,
+        default=300,
+        help="Stale file cleanup interval in seconds",
+    )
+    parser.add_argument(
+        "--ignore-cert-errors",
+        action="store_true",
+        help="Disable TLS certificate verification for upstream API requests",
+    )
     args = parser.parse_args()
 
     server = FileSystemProxyServer(

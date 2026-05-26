@@ -14,10 +14,8 @@ Usage:
 import argparse
 import http.server
 import json
-import os
 import time
 import uuid
-import threading
 import logging
 from pathlib import Path
 from datetime import datetime, timezone
@@ -33,9 +31,9 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 DEFAULT_QUEUE_DIR = r"H:\queue"
 DEFAULT_PORT = 8080
-POLL_INTERVAL = 0.3        # seconds between checking for response file
-REQUEST_TIMEOUT = 300       # seconds before giving up on a response
-CLEANUP_AFTER = True        # delete request/response files after use
+POLL_INTERVAL = 0.3  # seconds between checking for response file
+REQUEST_TIMEOUT = 300  # seconds before giving up on a response
+CLEANUP_AFTER = True  # delete request/response files after use
 
 
 class FileSystemProxy:
@@ -51,7 +49,9 @@ class FileSystemProxy:
         self.responses_dir.mkdir(parents=True, exist_ok=True)
         log.info(f"Queue directory: {self.queue_dir}")
 
-    def send_request(self, method: str, path: str, headers: dict, body: bytes | None) -> dict:
+    def send_request(
+        self, method: str, path: str, headers: dict, body: bytes | None
+    ) -> dict:
         """Write a request file and wait for the response file."""
         request_id = str(uuid.uuid4())
 
@@ -111,7 +111,9 @@ class FileSystemProxy:
         return {
             "status_code": 504,
             "headers": {"Content-Type": "application/json"},
-            "body": json.dumps({"error": {"message": "Filesystem proxy timeout", "type": "timeout"}}),
+            "body": json.dumps(
+                {"error": {"message": "Filesystem proxy timeout", "type": "timeout"}}
+            ),
         }
 
 
@@ -128,9 +130,7 @@ class ProxyHTTPHandler(http.server.BaseHTTPRequestHandler):
         # Collect headers (skip hop-by-hop)
         skip_headers = {"host", "connection", "transfer-encoding", "keep-alive"}
         headers = {
-            k: v
-            for k, v in self.headers.items()
-            if k.lower() not in skip_headers
+            k: v for k, v in self.headers.items() if k.lower() not in skip_headers
         }
 
         # Send through filesystem
@@ -187,15 +187,16 @@ class StreamingProxyHTTPHandler(ProxyHTTPHandler):
 
         skip_headers = {"host", "connection", "transfer-encoding", "keep-alive"}
         headers = {
-            k: v for k, v in self.headers.items()
-            if k.lower() not in skip_headers
+            k: v for k, v in self.headers.items() if k.lower() not in skip_headers
         }
 
         if not is_streaming:
             # Non-streaming: use normal flow
             response = self.proxy.send_request(
-                method=self.command, path=self.path,
-                headers=headers, body=body,
+                method=self.command,
+                path=self.path,
+                headers=headers,
+                body=body,
             )
             status = response.get("status_code", 500)
             resp_headers = response.get("headers", {})
@@ -298,10 +299,21 @@ class StreamingProxyHTTPHandler(ProxyHTTPHandler):
 def main():
     global REQUEST_TIMEOUT
     parser = argparse.ArgumentParser(description="Filesystem Proxy Client")
-    parser.add_argument("--queue-dir", default=DEFAULT_QUEUE_DIR, help="Shared drive queue directory")
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Local port to listen on")
-    parser.add_argument("--timeout", type=int, default=REQUEST_TIMEOUT, help="Response timeout in seconds")
-    parser.add_argument("--streaming", action="store_true", help="Enable SSE streaming support")
+    parser.add_argument(
+        "--queue-dir", default=DEFAULT_QUEUE_DIR, help="Shared drive queue directory"
+    )
+    parser.add_argument(
+        "--port", type=int, default=DEFAULT_PORT, help="Local port to listen on"
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=REQUEST_TIMEOUT,
+        help="Response timeout in seconds",
+    )
+    parser.add_argument(
+        "--streaming", action="store_true", help="Enable SSE streaming support"
+    )
     args = parser.parse_args()
 
     REQUEST_TIMEOUT = args.timeout
@@ -313,7 +325,9 @@ def main():
 
     server = http.server.HTTPServer(("127.0.0.1", args.port), handler_class)
     log.info(f"Listening on http://127.0.0.1:{args.port}")
-    log.info(f"Configure your AI agent with: OPENAI_API_BASE=http://127.0.0.1:{args.port}/v1")
+    log.info(
+        f"Configure your AI agent with: OPENAI_API_BASE=http://127.0.0.1:{args.port}/v1"
+    )
     log.info("Press Ctrl+C to stop")
 
     try:
