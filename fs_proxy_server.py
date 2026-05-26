@@ -19,6 +19,7 @@ import logging
 import threading
 import urllib3
 import requests
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -52,6 +53,7 @@ class FileSystemProxyServer:
         # Track processed files to avoid double-processing
         self.processed: set[str] = set()
         self.lock = threading.Lock()
+        self.executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
         # Create dirs
         self.requests_dir.mkdir(parents=True, exist_ok=True)
@@ -138,6 +140,13 @@ class FileSystemProxyServer:
             stream=True,
         )
 
+        # Write meta file first so the client knows the real status code
+        meta_file = self.responses_dir / f"{request_id}-meta.json"
+        tmp_file = self.responses_dir / f"{request_id}-meta.tmp"
+        with open(tmp_file, "w", encoding="utf-8") as f:
+            json.dump({"status_code": response.status_code, "headers": dict(response.headers)}, f)
+        tmp_file.rename(meta_file)
+
         seq = 0
         for line in response.iter_lines(decode_unicode=True):
             if not line:
@@ -194,13 +203,7 @@ class FileSystemProxyServer:
                         continue
                     self.processed.add(fname)
 
-                # Process in a thread
-                thread = threading.Thread(
-                    target=self.process_request,
-                    args=(req_file,),
-                    daemon=True,
-                )
-                thread.start()
+                self.executor.submit(self.process_request, req_file)
         except OSError as e:
             log.error(f"Error scanning queue: {e}")
 

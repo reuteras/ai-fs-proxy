@@ -227,8 +227,28 @@ class StreamingProxyHTTPHandler(ProxyHTTPHandler):
         tmp_file.rename(req_file)
         log.info(f"Streaming request {request_id} written")
 
-        # Send SSE headers
-        self.send_response(200)
+        # Wait for meta file (contains real status code from upstream)
+        meta_file = self.proxy.responses_dir / f"{request_id}-meta.json"
+        meta_start = time.monotonic()
+        meta = None
+        while time.monotonic() - meta_start < REQUEST_TIMEOUT:
+            if meta_file.exists():
+                time.sleep(0.05)
+                try:
+                    with open(meta_file, "r", encoding="utf-8") as f:
+                        meta = json.load(f)
+                    meta_file.unlink(missing_ok=True)
+                    break
+                except (json.JSONDecodeError, OSError):
+                    time.sleep(0.1)
+            time.sleep(POLL_INTERVAL)
+
+        if meta is None:
+            log.error(f"Stream {request_id} meta timed out")
+            req_file.unlink(missing_ok=True)
+            return
+
+        self.send_response(meta.get("status_code", 200))
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.end_headers()

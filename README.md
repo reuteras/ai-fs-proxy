@@ -12,7 +12,7 @@ Tunnels OpenAI-compatible API requests through a shared filesystem (e.g. a mappe
 │     ▼               │                          │                     │
 │   localhost:8080    │    H:\queue\responses\   │                     │
 │     ▼               │    ◀─────────────────    │                     │
-│   fs_proxy_clien    │                          │                     │
+│   fs_proxy_client   │                          │                     │
 └─────────────────────┘                          └─────────────────────┘
 ```
 
@@ -123,6 +123,7 @@ Files are written to `.tmp` first and then renamed. This prevents the other side
 | `--api-base` | `http://localhost:11434/v1` | Upstream AI model API URL |
 | `--api-key` | `$OPENAI_API_KEY` | API key for the upstream API |
 | `--cleanup-interval` | `300` | Seconds between stale file cleanup |
+| `--ignore-cert-errors` | off | Disable TLS certificate verification for upstream requests |
 
 ## Troubleshooting
 
