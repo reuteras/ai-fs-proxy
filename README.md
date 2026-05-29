@@ -108,22 +108,22 @@ Files are written to `.tmp` first and then renamed. This prevents the other side
 
 ### Client
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--queue-dir` | `H:\queue` | Shared drive queue directory |
-| `--port` | `8080` | Local port to listen on |
-| `--timeout` | `300` | Max seconds to wait for a response |
-| `--streaming` | off | Enable SSE streaming support |
+| Flag          | Default    | Description                        |
+|---------------|------------|------------------------------------|
+| `--queue-dir` | `H:\queue` | Shared drive queue directory       |
+| `--port`      | `8080`     | Local port to listen on            |
+| `--timeout`   | `300`      | Max seconds to wait for a response |
+| `--streaming` | off        | Enable SSE streaming support       |
 
 ### Server
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--queue-dir` | `H:\queue` | Shared drive queue directory |
-| `--api-base` | `http://localhost:11434/v1` | Upstream AI model API URL |
-| `--api-key` | `$OPENAI_API_KEY` | API key for the upstream API |
-| `--cleanup-interval` | `300` | Seconds between stale file cleanup |
-| `--ignore-cert-errors` | off | Disable TLS certificate verification for upstream requests |
+| Flag                   | Default                     | Description                                                |
+|------------------------|-----------------------------|------------------------------------------------------------|
+| `--queue-dir`          | `H:\queue`                  | Shared drive queue directory                               |
+| `--api-base`           | `http://localhost:11434/v1` | Upstream AI model API URL                                  |
+| `--api-key`            | `$OPENAI_API_KEY`           | API key for the upstream API                               |
+| `--cleanup-interval`   | `300`                       | Seconds between stale file cleanup                         |
+| `--ignore-cert-errors` | off                         | Disable TLS certificate verification for upstream requests |
 
 ## Troubleshooting
 
