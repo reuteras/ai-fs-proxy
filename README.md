@@ -4,7 +4,7 @@ Tunnels OpenAI-compatible API requests through a shared filesystem (e.g. a mappe
 
 ## Architecture
 
-```
+```text
 ┌─────────────────────┐                          ┌─────────────────────┐
 │   DFIR Sandbox      │                          │   Proxy Machine     │
 │                     │    H:\queue\requests\    │                     │

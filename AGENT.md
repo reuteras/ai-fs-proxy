@@ -20,12 +20,12 @@ python fs_proxy_client.py --queue-dir /path/to/queue --port 8080
 
 ## Key constants (tune if needed)
 
-| Constant | File | Default | Purpose |
-|---|---|---|---|
-| `POLL_INTERVAL` | both | `0.3s` | Polling frequency for new files |
-| `MAX_WORKERS` | server | `4` | ThreadPoolExecutor concurrency cap |
-| `REQUEST_TIMEOUT` | server | `120s` | Upstream API call timeout |
-| `REQUEST_TIMEOUT` | client | `300s` | Max wait for a response (overridable via `--timeout`) |
+| Constant          | File   | Default | Purpose                                               |
+|-------------------|--------|---------|-------------------------------------------------------|
+| `POLL_INTERVAL`   | both   | `0.3s`  | Polling frequency for new files                       |
+| `MAX_WORKERS`     | server | `4`     | ThreadPoolExecutor concurrency cap                    |
+| `REQUEST_TIMEOUT` | server | `120s`  | Upstream API call timeout                             |
+| `REQUEST_TIMEOUT` | client | `300s`  | Max wait for a response (overridable via `--timeout`) |
 
 ## File protocol
 
