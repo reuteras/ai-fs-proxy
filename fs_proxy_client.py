@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""
+r"""
 fs_proxy_client.py — Filesystem Proxy Client (runs on the DFIR sandbox)
 
 Exposes a local OpenAI-compatible HTTP API on localhost.
@@ -14,11 +14,11 @@ Usage:
 import argparse
 import http.server
 import json
+import logging
 import time
 import uuid
-import logging
-from pathlib import Path
 from datetime import datetime, timezone
+from pathlib import Path
 
 logging.basicConfig(
     level=logging.INFO,
@@ -267,7 +267,7 @@ class StreamingProxyHTTPHandler(ProxyHTTPHandler):
                 try:
                     with open(chunk_file, "r", encoding="utf-8") as f:
                         chunk_data = f.read()
-                    self.wfile.write(f"data: {chunk_data}\n\n".encode("utf-8"))
+                    self.wfile.write(f"data: {chunk_data}\n\n".encode())
                     self.wfile.flush()
                     chunk_file.unlink(missing_ok=True)
                     seq += 1

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""
+r"""
 fs_proxy_server.py — Filesystem Proxy Server (runs on the machine with network access)
 
 Watches the shared drive for request files, forwards them to the actual
@@ -13,15 +13,16 @@ Usage:
 
 import argparse
 import json
-import os
-import time
 import logging
+import os
 import threading
-import urllib3
-import requests
+import time
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from datetime import datetime, timezone
+from pathlib import Path
+
+import requests
+import urllib3
 
 logging.basicConfig(
     level=logging.INFO,
@@ -103,7 +104,7 @@ class FileSystemProxyServer:
             else:
                 self._handle_normal(request_id, method, url, headers, body)
         except Exception as e:
-            log.error(f"Error processing {request_id}: {e}")
+            log.exception(f"Error processing {request_id}")
             self._write_error_response(request_id, str(e))
 
     def _handle_normal(
