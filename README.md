@@ -33,6 +33,7 @@ python fs_proxy_server.py --queue-dir H:\queue --api-base http://ai-model-host:1
 ```
 
 If your API requires a key:
+
 ```cmd
 python fs_proxy_server.py --queue-dir H:\queue --api-base http://ai-model-host:11434/v1 --api-key sk-your-key
 :: or
@@ -47,6 +48,7 @@ python fs_proxy_client.py --queue-dir H:\queue --port 8080
 ```
 
 For streaming support (SSE):
+
 ```cmd
 python fs_proxy_client.py --queue-dir H:\queue --port 8080 --streaming
 ```
@@ -79,6 +81,7 @@ curl http://127.0.0.1:8080/v1/chat/completions -H "Content-Type: application/jso
 ### File format
 
 **Request** (`H:\queue\requests\<uuid>.json`):
+
 ```json
 {
   "id": "550e8400-...",
@@ -91,6 +94,7 @@ curl http://127.0.0.1:8080/v1/chat/completions -H "Content-Type: application/jso
 ```
 
 **Response** (`H:\queue\responses\<uuid>.json`):
+
 ```json
 {
   "id": "550e8400-...",
