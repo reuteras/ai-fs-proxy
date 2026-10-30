@@ -15,6 +15,9 @@ Multiple upstreams (routed by the first path segment, e.g. /ollama/v1/...):
         --upstream ollama=http://gpu-box:11434/v1 \
         --upstream vllm=https://vllm-host/v1
     API keys per upstream come from FS_PROXY_KEY_<NAME> (e.g. FS_PROXY_KEY_VLLM).
+
+Client-chosen URLs (the client's /fwd/<scheme>/<host>/... paths), limited to prefixes:
+    python fs_proxy_server.py --queue-dir H:\queue --allow-url https://llm.example.com/
 """
 
 import argparse
@@ -27,6 +30,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 import requests
 import urllib3
@@ -58,6 +62,42 @@ def join_url(api_base: str, path: str) -> str:
     return f"{base}{path}"
 
 
+def url_allowed(url: str, prefixes: list[str]) -> bool:
+    """Check a full URL against allowlist prefixes.
+
+    Scheme and host[:port] must match exactly and the path must start at a
+    segment boundary of the prefix path, so https://a.example does not match
+    https://a.example.evil or https://a.example:8443. A prefix with only a
+    scheme (e.g. "https://") allows every host for that scheme.
+    """
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return False
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        return False
+    if "@" in parts.netloc or "\\" in url:
+        return False
+    if any(seg in (".", "..") for seg in unquote(parts.path).split("/")):
+        return False
+    for prefix in prefixes:
+        pre = urlsplit(prefix)
+        if pre.scheme != parts.scheme:
+            continue
+        if not pre.netloc:
+            return True
+        if pre.netloc.lower() != parts.netloc.lower():
+            continue
+        pre_path = pre.path.rstrip("/")
+        if (
+            not pre_path
+            or parts.path == pre_path
+            or parts.path.startswith(pre_path + "/")
+        ):
+            return True
+    return False
+
+
 def key_env_name(name: str) -> str:
     return "FS_PROXY_KEY_" + re.sub(r"[^A-Za-z0-9]", "_", name).upper()
 
@@ -72,6 +112,7 @@ class FileSystemProxyServer:
         api_key: str | None = None,
         ignore_cert_errors: bool = False,
         upstreams: dict[str, dict] | None = None,
+        allow_urls: list[str] | None = None,
     ):
         self.queue_dir = Path(queue_dir)
         self.requests_dir = self.queue_dir / "requests"
@@ -80,6 +121,8 @@ class FileSystemProxyServer:
         self.api_key = api_key
         # name -> {"api_base": str, "api_key": str | None}
         self.upstreams = upstreams or {}
+        # URL prefixes the client may target directly via request["url"]
+        self.allow_urls = allow_urls or []
 
         # Track processed files to avoid double-processing
         self.processed: set[str] = set()
@@ -104,6 +147,8 @@ class FileSystemProxyServer:
             log.info(f"Upstream /{name} -> {up['api_base']} ({key_info})")
         if self.api_base:
             log.info(f"Default API base: {self.api_base}")
+        for prefix in self.allow_urls:
+            log.info(f"Client URLs allowed under: {prefix}")
 
     def resolve(self, path: str) -> tuple[str, str | None] | None:
         """Map a request path to (upstream URL, api key)."""
@@ -132,8 +177,26 @@ class FileSystemProxyServer:
         headers = request_data.get("headers", {})
         body = request_data.get("body")
         is_streaming = request_data.get("stream", False)
+        full_url = request_data.get("url")
 
-        resolved = self.resolve(path)
+        if full_url:
+            # Client-chosen URL: only allowlisted, no server key, no redirects
+            if not url_allowed(full_url, self.allow_urls):
+                log.warning(f"Rejected {request_id}: URL not allowed: {full_url}")
+                reason = (
+                    "not in the server's --allow-url list"
+                    if self.allow_urls
+                    else "disabled (server has no --allow-url)"
+                )
+                self._write_error_response(
+                    request_id,
+                    f"Forwarding to {full_url} is {reason}",
+                    status_code=403,
+                )
+                return
+            resolved = (full_url, None)
+        else:
+            resolved = self.resolve(path)
         if resolved is None:
             log.error(f"No upstream for {request_id}: {path}")
             known = ", ".join(f"/{n}" for n in self.upstreams) or "(none)"
@@ -151,17 +214,27 @@ class FileSystemProxyServer:
 
         log.info(f"Processing {request_id}: {method} {url} (stream={is_streaming})")
 
+        # A redirect could lead away from an allowlisted URL, so don't follow
+        redirects = not full_url
         try:
             if is_streaming:
-                self._handle_streaming(request_id, method, url, headers, body)
+                self._handle_streaming(
+                    request_id, method, url, headers, body, redirects
+                )
             else:
-                self._handle_normal(request_id, method, url, headers, body)
+                self._handle_normal(request_id, method, url, headers, body, redirects)
         except Exception as e:
             log.exception(f"Error processing {request_id}")
             self._write_error_response(request_id, str(e))
 
     def _handle_normal(
-        self, request_id: str, method: str, url: str, headers: dict, body: str | None
+        self,
+        request_id: str,
+        method: str,
+        url: str,
+        headers: dict,
+        body: str | None,
+        redirects: bool = True,
     ):
         """Handle a normal (non-streaming) request."""
         response = self.session.request(
@@ -170,6 +243,7 @@ class FileSystemProxyServer:
             headers=headers,
             data=body.encode("utf-8") if body else None,
             timeout=REQUEST_TIMEOUT,
+            allow_redirects=redirects,
         )
 
         # Build response envelope
@@ -191,7 +265,13 @@ class FileSystemProxyServer:
         log.info(f"Response {request_id} written (HTTP {response.status_code})")
 
     def _handle_streaming(
-        self, request_id: str, method: str, url: str, headers: dict, body: str | None
+        self,
+        request_id: str,
+        method: str,
+        url: str,
+        headers: dict,
+        body: str | None,
+        redirects: bool = True,
     ):
         """Handle a streaming (SSE) request by writing chunk files."""
         response = self.session.request(
@@ -200,6 +280,7 @@ class FileSystemProxyServer:
             headers=headers,
             data=body.encode("utf-8") if body else None,
             timeout=REQUEST_TIMEOUT,
+            allow_redirects=redirects,
             stream=True,
         )
 
@@ -334,6 +415,14 @@ def main():
         "API key is read from FS_PROXY_KEY_<NAME>",
     )
     parser.add_argument(
+        "--allow-url",
+        action="append",
+        default=[],
+        metavar="PREFIX",
+        help="Allow the client to target URLs under this prefix directly "
+        "(repeatable), e.g. https://llm.example.com/ or https:// for any host",
+    )
+    parser.add_argument(
         "--api-key",
         default=os.environ.get("OPENAI_API_KEY"),
         help="API key (or set OPENAI_API_KEY env var)",
@@ -371,6 +460,7 @@ def main():
         api_key=args.api_key,
         ignore_cert_errors=args.ignore_cert_errors,
         upstreams=upstreams,
+        allow_urls=args.allow_url,
     )
 
     # Periodic cleanup thread

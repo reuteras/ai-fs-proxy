@@ -105,6 +105,38 @@ Then define one opencode provider per upstream in `opencode.json`:
 }
 ```
 
+## Client-chosen URLs (no server change per host)
+
+Instead of naming every upstream on the server, the agent can put the full upstream URL in its base URL:
+
+```text
+http://127.0.0.1:8080/fwd/<scheme>/<host[:port]>/<path>
+http://127.0.0.1:8080/fwd/https/llm.example.com/v1   ->  https://llm.example.com/v1
+```
+
+For security the server only forwards these to URLs matching an `--allow-url` prefix, set once when the server starts:
+
+```cmd
+python fs_proxy_server.py --queue-dir H:\queue ^
+    --allow-url https://llm.example.com/v1 ^
+    --allow-url http://10.0.0.5:11434/
+```
+
+- Scheme and `host[:port]` must match exactly, and the path must start at a segment boundary (`/v1` allows `/v1/chat/completions` but not `/v10` or `/admin`). `--allow-url https://` allows any HTTPS host.
+- Without `--allow-url`, `/fwd/...` requests are refused with HTTP 403. Without it, anything in the sandbox that can write to the queue could make the proxy machine call any address it can reach.
+- No server-side API key is added for these requests: put the key in the agent config (opencode's `apiKey`), and the `Authorization` header is passed through.
+- Redirects are not followed for these requests, so an allowed host cannot redirect the proxy elsewhere.
+
+opencode provider example:
+
+```json
+"cloud": {
+  "npm": "@ai-sdk/openai-compatible",
+  "options": { "baseURL": "http://127.0.0.1:8080/fwd/https/llm.example.com/v1", "apiKey": "sk-your-key" },
+  "models": { "gpt-4o": {} }
+}
+```
+
 ## Testing
 
 Quick test from the sandbox with curl:
@@ -169,6 +201,7 @@ Files are written to `.tmp` first and then renamed. This prevents the other side
 | `--queue-dir`          | `H:\queue`                  | Shared drive queue directory                               |
 | `--api-base`           | `http://localhost:11434/v1` | Default upstream API URL (no default if `--upstream` set)  |
 | `--upstream`           | none                        | `NAME=URL`, reached via `/NAME/...`; repeatable            |
+| `--allow-url`          | none                        | URL prefix the client may target via `/fwd/...`; repeatable |
 | `--api-key`            | `$OPENAI_API_KEY`           | API key for the upstream API                               |
 | `--cleanup-interval`   | `300`                       | Seconds between stale file cleanup                         |
 | `--ignore-cert-errors` | off                         | Disable TLS certificate verification for upstream requests |

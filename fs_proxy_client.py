@@ -9,6 +9,10 @@ proxy server, and responses are written back as files.
 
 Usage:
     python fs_proxy_client.py --queue-dir H:\queue --port 8080
+
+Any upstream URL can be given in the agent's base URL, e.g.
+    http://127.0.0.1:8080/fwd/https/llm.example.com/v1
+The server only forwards these if the URL matches one of its --allow-url prefixes.
 """
 
 import argparse
@@ -34,6 +38,17 @@ DEFAULT_PORT = 8080
 POLL_INTERVAL = 0.3  # seconds between checking for response file
 REQUEST_TIMEOUT = 300  # seconds before giving up on a response
 CLEANUP_AFTER = True  # delete request/response files after use
+FORWARD_PREFIX = "/fwd/"  # /fwd/<scheme>/<host[:port]>/<path> -> full URL
+
+
+def forward_url(path: str) -> str | None:
+    """Turn /fwd/https/host:port/v1/... into https://host:port/v1/..., else None."""
+    if not path.startswith(FORWARD_PREFIX):
+        return None
+    scheme, _, rest = path[len(FORWARD_PREFIX) :].partition("/")
+    if scheme not in ("http", "https") or not rest:
+        return None
+    return f"{scheme}://{rest}"
 
 
 class FileSystemProxy:
@@ -64,6 +79,9 @@ class FileSystemProxy:
             "headers": headers,
             "body": body.decode("utf-8") if body else None,
         }
+        url = forward_url(path)
+        if url:
+            request_data["url"] = url
 
         # Write request file (write to .tmp first, then rename for atomicity)
         req_file = self.requests_dir / f"{request_id}.json"
@@ -221,6 +239,9 @@ class StreamingProxyHTTPHandler(ProxyHTTPHandler):
             "body": body.decode("utf-8") if body else None,
             "stream": True,
         }
+        url = forward_url(self.path)
+        if url:
+            request_data["url"] = url
         req_file = self.proxy.requests_dir / f"{request_id}.json"
         tmp_file = self.proxy.requests_dir / f"{request_id}.tmp"
         with open(tmp_file, "w", encoding="utf-8") as f:
