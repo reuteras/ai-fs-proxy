@@ -229,16 +229,19 @@ class StreamingProxyHTTPHandler(ProxyHTTPHandler):
         log.info(f"Streaming request {request_id} written")
 
         # Wait for meta file (contains real status code from upstream)
+        # or for a plain error response if the server failed the request
         meta_file = self.proxy.responses_dir / f"{request_id}-meta.json"
+        error_file = self.proxy.responses_dir / f"{request_id}.json"
         meta_start = time.monotonic()
         meta = None
         while time.monotonic() - meta_start < REQUEST_TIMEOUT:
-            if meta_file.exists():
+            found = next((p for p in (meta_file, error_file) if p.exists()), None)
+            if found:
                 time.sleep(0.05)
                 try:
-                    with open(meta_file, "r", encoding="utf-8") as f:
+                    with open(found, "r", encoding="utf-8") as f:
                         meta = json.load(f)
-                    meta_file.unlink(missing_ok=True)
+                    found.unlink(missing_ok=True)
                     break
                 except (json.JSONDecodeError, OSError):
                     time.sleep(0.1)
@@ -265,6 +268,8 @@ class StreamingProxyHTTPHandler(ProxyHTTPHandler):
         if "body" in meta:
             # Upstream answered without SSE (usually an error): pass it through
             req_file.unlink(missing_ok=True)
+            done_file = self.proxy.responses_dir / f"{request_id}-done.json"
+            done_file.unlink(missing_ok=True)
             self.send_response(meta.get("status_code", 502))
             for k, v in meta.get("headers", {}).items():
                 if k.lower() not in (

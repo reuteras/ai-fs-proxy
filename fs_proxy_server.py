@@ -222,10 +222,12 @@ class FileSystemProxyServer:
             log.info(
                 f"Stream {request_id} got non-SSE reply (HTTP {response.status_code})"
             )
-            return
 
+        # Still write the done file for a non-SSE reply, so older clients
+        # (which ignore the meta body) finish instead of waiting for chunks
         seq = 0
-        for line in response.iter_lines(decode_unicode=True):
+        lines = response.iter_lines(decode_unicode=True) if is_sse else []
+        for line in lines:
             if not line:
                 continue
             if line.startswith("data: "):
