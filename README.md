@@ -119,10 +119,12 @@ For security the server only forwards these to URLs matching an `--allow-url` pr
 ```cmd
 python fs_proxy_server.py --queue-dir H:\queue ^
     --allow-url https://llm.example.com/v1 ^
-    --allow-url http://10.0.0.5:11434/
+    --allow-url http://10.0.0.5:11434/ ^
+    --allow-url https://*.domain.com/v1
 ```
 
-- Scheme and `host[:port]` must match exactly, and the path must start at a segment boundary (`/v1` allows `/v1/chat/completions` but not `/v10` or `/admin`). `--allow-url https://` allows any HTTPS host.
+- Scheme and `host[:port]` must match exactly, and the path must start at a segment boundary (`/v1` allows `/v1/chat/completions` but not `/v10` or `/admin`). A default port (`:443`, `:80`) can be written or left out.
+- `*.domain.com` matches any subdomain (`a.domain.com`, `a.b.domain.com`) but not `domain.com` itself; add that separately if needed. `--allow-url https://` allows any HTTPS host.
 - Without `--allow-url`, `/fwd/...` requests are refused with HTTP 403. Without it, anything in the sandbox that can write to the queue could make the proxy machine call any address it can reach.
 - No server-side API key is added for these requests: put the key in the agent config (opencode's `apiKey`), and the `Authorization` header is passed through.
 - Redirects are not followed for these requests, so an allowed host cannot redirect the proxy elsewhere.

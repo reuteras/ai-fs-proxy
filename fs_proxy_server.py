@@ -62,16 +62,23 @@ def join_url(api_base: str, path: str) -> str:
     return f"{base}{path}"
 
 
+DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
 def url_allowed(url: str, prefixes: list[str]) -> bool:
     """Check a full URL against allowlist prefixes.
 
-    Scheme and host[:port] must match exactly and the path must start at a
-    segment boundary of the prefix path, so https://a.example does not match
-    https://a.example.evil or https://a.example:8443. A prefix with only a
-    scheme (e.g. "https://") allows every host for that scheme.
+    Scheme, host and port must match and the path must start at a segment
+    boundary of the prefix path, so https://a.example does not match
+    https://a.example.evil or https://a.example:8443. A host of *.example.com
+    matches any subdomain (a.example.com, a.b.example.com) but not
+    example.com itself. A prefix with only a scheme (e.g. "https://") allows
+    every host for that scheme.
     """
     try:
         parts = urlsplit(url)
+        host = (parts.hostname or "").rstrip(".")
+        port = parts.port or DEFAULT_PORTS.get(parts.scheme)
     except ValueError:
         return False
     if parts.scheme not in ("http", "https") or not parts.netloc:
@@ -86,7 +93,17 @@ def url_allowed(url: str, prefixes: list[str]) -> bool:
             continue
         if not pre.netloc:
             return True
-        if pre.netloc.lower() != parts.netloc.lower():
+        try:
+            pre_host = (pre.hostname or "").rstrip(".")
+            pre_port = pre.port or DEFAULT_PORTS.get(pre.scheme)
+        except ValueError:
+            continue
+        if pre_port != port:
+            continue
+        if pre_host.startswith("*."):
+            if not host.endswith(pre_host[1:]) or len(host) <= len(pre_host) - 1:
+                continue
+        elif pre_host != host:
             continue
         pre_path = pre.path.rstrip("/")
         if (
@@ -420,7 +437,8 @@ def main():
         default=[],
         metavar="PREFIX",
         help="Allow the client to target URLs under this prefix directly "
-        "(repeatable), e.g. https://llm.example.com/ or https:// for any host",
+        "(repeatable), e.g. https://llm.example.com/v1, https://*.domain.com/ "
+        "or https:// for any host",
     )
     parser.add_argument(
         "--api-key",
