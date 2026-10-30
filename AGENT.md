@@ -32,6 +32,8 @@ python fs_proxy_client.py --queue-dir /path/to/queue --port 8080
 - Requests: `<queue>/requests/<uuid>.json` (written atomically via `.tmp` rename)
 - Non-streaming responses: `<queue>/responses/<uuid>.json`
 - Streaming responses: `<queue>/responses/<uuid>-meta.json` (status + headers), then `<uuid>-000000.json`, `<uuid>-000001.json` … `<uuid>-done.json`
+- Routing: first path segment matching an `--upstream NAME=URL` selects that upstream (prefix stripped); otherwise `--api-base`; otherwise 404. Per-upstream key from `FS_PROXY_KEY_<NAME>`
+- Streaming with a non-SSE upstream reply (errors): `-meta.json` carries a `body` and no chunk files follow
 - Errors from the server: HTTP 502 response envelope written to `<queue>/responses/<uuid>.json`
 
 ## Testing

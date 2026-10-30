@@ -247,6 +247,37 @@ class StreamingProxyHTTPHandler(ProxyHTTPHandler):
         if meta is None:
             log.error(f"Stream {request_id} meta timed out")
             req_file.unlink(missing_ok=True)
+            self.send_response(504)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(
+                json.dumps(
+                    {
+                        "error": {
+                            "message": "Filesystem proxy timeout",
+                            "type": "timeout",
+                        }
+                    }
+                ).encode("utf-8")
+            )
+            return
+
+        if "body" in meta:
+            # Upstream answered without SSE (usually an error): pass it through
+            req_file.unlink(missing_ok=True)
+            self.send_response(meta.get("status_code", 502))
+            for k, v in meta.get("headers", {}).items():
+                if k.lower() not in (
+                    "transfer-encoding",
+                    "connection",
+                    "content-length",
+                    "content-encoding",
+                ):
+                    self.send_header(k, v)
+            payload = (meta["body"] or "").encode("utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
             return
 
         self.send_response(meta.get("status_code", 200))
@@ -323,7 +354,8 @@ def main():
     handler_class = StreamingProxyHTTPHandler if args.streaming else ProxyHTTPHandler
     handler_class.proxy = proxy
 
-    server = http.server.HTTPServer(("127.0.0.1", args.port), handler_class)
+    # Threaded: agents like opencode issue several requests concurrently
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", args.port), handler_class)
     log.info(f"Listening on http://127.0.0.1:{args.port}")
     log.info(
         f"Configure your AI agent with: OPENAI_API_BASE=http://127.0.0.1:{args.port}/v1"

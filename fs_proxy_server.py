@@ -9,12 +9,19 @@ Usage:
     python fs_proxy_server.py --queue-dir H:\queue --api-base http://ai-model:11434/v1
     python fs_proxy_server.py --queue-dir H:\queue --api-base http://ai-model:11434/v1 --api-key sk-...
     python fs_proxy_server.py --queue-dir H:\queue --api-base https://ai-model/v1 --ignore-cert-errors
+
+Multiple upstreams (routed by the first path segment, e.g. /ollama/v1/...):
+    python fs_proxy_server.py --queue-dir H:\queue \
+        --upstream ollama=http://gpu-box:11434/v1 \
+        --upstream vllm=https://vllm-host/v1
+    API keys per upstream come from FS_PROXY_KEY_<NAME> (e.g. FS_PROXY_KEY_VLLM).
 """
 
 import argparse
 import json
 import logging
 import os
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -40,21 +47,39 @@ MAX_WORKERS = 4  # concurrent request handlers
 REQUEST_TIMEOUT = 120  # timeout for upstream HTTP requests
 
 
+def join_url(api_base: str, path: str) -> str:
+    """Join base and path, collapsing a duplicated segment such as /v1 + /v1/..."""
+    base = api_base.rstrip("/")
+    if not path.startswith("/"):
+        path = "/" + path
+    base_last = "/" + base.rsplit("/", 1)[-1]
+    if path == base_last or path.startswith((base_last + "/", base_last + "?")):
+        path = path[len(base_last) :]
+    return f"{base}{path}"
+
+
+def key_env_name(name: str) -> str:
+    return "FS_PROXY_KEY_" + re.sub(r"[^A-Za-z0-9]", "_", name).upper()
+
+
 class FileSystemProxyServer:
     """Watches for request files and forwards them to the AI model API."""
 
     def __init__(
         self,
         queue_dir: str,
-        api_base: str,
+        api_base: str | None,
         api_key: str | None = None,
         ignore_cert_errors: bool = False,
+        upstreams: dict[str, dict] | None = None,
     ):
         self.queue_dir = Path(queue_dir)
         self.requests_dir = self.queue_dir / "requests"
         self.responses_dir = self.queue_dir / "responses"
-        self.api_base = api_base.rstrip("/")
+        self.api_base = api_base.rstrip("/") if api_base else None
         self.api_key = api_key
+        # name -> {"api_base": str, "api_key": str | None}
+        self.upstreams = upstreams or {}
 
         # Track processed files to avoid double-processing
         self.processed: set[str] = set()
@@ -67,8 +92,6 @@ class FileSystemProxyServer:
 
         # Session for connection pooling
         self.session = requests.Session()
-        if self.api_key:
-            self.session.headers["Authorization"] = f"Bearer {self.api_key}"
 
         if ignore_cert_errors:
             self.session.verify = False
@@ -76,7 +99,23 @@ class FileSystemProxyServer:
             log.warning("TLS certificate verification is disabled")
 
         log.info(f"Queue directory: {self.queue_dir}")
-        log.info(f"API base: {self.api_base}")
+        for name, up in self.upstreams.items():
+            key_info = "with key" if up.get("api_key") else "no key"
+            log.info(f"Upstream /{name} -> {up['api_base']} ({key_info})")
+        if self.api_base:
+            log.info(f"Default API base: {self.api_base}")
+
+    def resolve(self, path: str) -> tuple[str, str | None] | None:
+        """Map a request path to (upstream URL, api key)."""
+        segment, _, rest = path.lstrip("/").partition("/")
+        name = segment.split("?", 1)[0]
+        if name in self.upstreams:
+            up = self.upstreams[name]
+            remainder = "/" + rest if rest else path[len(name) + 1 :] or "/"
+            return join_url(up["api_base"], remainder), up.get("api_key")
+        if self.api_base:
+            return join_url(self.api_base, path), self.api_key
+        return None
 
     def process_request(self, req_file: Path):
         """Process a single request file."""
@@ -94,8 +133,22 @@ class FileSystemProxyServer:
         body = request_data.get("body")
         is_streaming = request_data.get("stream", False)
 
-        # Build upstream URL
-        url = f"{self.api_base}{path}"
+        resolved = self.resolve(path)
+        if resolved is None:
+            log.error(f"No upstream for {request_id}: {path}")
+            known = ", ".join(f"/{n}" for n in self.upstreams) or "(none)"
+            self._write_error_response(
+                request_id,
+                f"No upstream configured for path {path}; known prefixes: {known}",
+                status_code=404,
+            )
+            return
+        url, api_key = resolved
+        if api_key:
+            # Override whatever placeholder key the agent sent
+            headers = {k: v for k, v in headers.items() if k.lower() != "authorization"}
+            headers["Authorization"] = f"Bearer {api_key}"
+
         log.info(f"Processing {request_id}: {method} {url} (stream={is_streaming})")
 
         try:
@@ -150,18 +203,26 @@ class FileSystemProxyServer:
             stream=True,
         )
 
-        # Write meta file first so the client knows the real status code
+        # Write meta file first so the client knows the real status code.
+        # If upstream did not answer with SSE (typically an error), include
+        # the body so the client can return it as a normal response.
+        meta = {
+            "status_code": response.status_code,
+            "headers": dict(response.headers),
+        }
+        is_sse = "text/event-stream" in response.headers.get("Content-Type", "")
+        if not is_sse:
+            meta["body"] = response.text
         meta_file = self.responses_dir / f"{request_id}-meta.json"
         tmp_file = self.responses_dir / f"{request_id}-meta.tmp"
         with open(tmp_file, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "status_code": response.status_code,
-                    "headers": dict(response.headers),
-                },
-                f,
-            )
+            json.dump(meta, f)
         tmp_file.rename(meta_file)
+        if not is_sse:
+            log.info(
+                f"Stream {request_id} got non-SSE reply (HTTP {response.status_code})"
+            )
+            return
 
         seq = 0
         for line in response.iter_lines(decode_unicode=True):
@@ -189,12 +250,14 @@ class FileSystemProxyServer:
 
         log.info(f"Stream {request_id} complete ({seq} chunks)")
 
-    def _write_error_response(self, request_id: str, error_msg: str):
+    def _write_error_response(
+        self, request_id: str, error_msg: str, status_code: int = 502
+    ):
         """Write an error response file."""
         response_data = {
             "id": request_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "status_code": 502,
+            "status_code": status_code,
             "headers": {"Content-Type": "application/json"},
             "body": json.dumps(
                 {
@@ -255,7 +318,18 @@ def main():
         "--queue-dir", default=DEFAULT_QUEUE_DIR, help="Shared drive queue directory"
     )
     parser.add_argument(
-        "--api-base", default=DEFAULT_API_BASE, help="AI model API base URL"
+        "--api-base",
+        default=None,
+        help=f"Default AI model API base URL (default: {DEFAULT_API_BASE} "
+        "unless --upstream is given)",
+    )
+    parser.add_argument(
+        "--upstream",
+        action="append",
+        default=[],
+        metavar="NAME=URL",
+        help="Named upstream, reached via /NAME/... (repeatable). "
+        "API key is read from FS_PROXY_KEY_<NAME>",
     )
     parser.add_argument(
         "--api-key",
@@ -275,11 +349,26 @@ def main():
     )
     args = parser.parse_args()
 
+    upstreams: dict[str, dict] = {}
+    for spec in args.upstream:
+        name, sep, url = spec.partition("=")
+        if not sep or not name or not url:
+            parser.error(f"--upstream must be NAME=URL, got {spec!r}")
+        upstreams[name] = {
+            "api_base": url.rstrip("/"),
+            "api_key": os.environ.get(key_env_name(name)),
+        }
+
+    api_base = args.api_base
+    if api_base is None and not upstreams:
+        api_base = DEFAULT_API_BASE
+
     server = FileSystemProxyServer(
         queue_dir=args.queue_dir,
-        api_base=args.api_base,
+        api_base=api_base,
         api_key=args.api_key,
         ignore_cert_errors=args.ignore_cert_errors,
+        upstreams=upstreams,
     )
 
     # Periodic cleanup thread
