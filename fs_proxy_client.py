@@ -9,6 +9,10 @@ proxy server, and responses are written back as files.
 
 Usage:
     python fs_proxy_client.py --queue-dir H:\queue --port 8080
+
+Any upstream URL can be given in the agent's base URL, e.g.
+    http://127.0.0.1:8080/fwd/https/llm.example.com/v1
+The server only forwards these if the URL matches one of its --allow-url prefixes.
 """
 
 import argparse
@@ -34,6 +38,17 @@ DEFAULT_PORT = 8080
 POLL_INTERVAL = 0.3  # seconds between checking for response file
 REQUEST_TIMEOUT = 300  # seconds before giving up on a response
 CLEANUP_AFTER = True  # delete request/response files after use
+FORWARD_PREFIX = "/fwd/"  # /fwd/<scheme>/<host[:port]>/<path> -> full URL
+
+
+def forward_url(path: str) -> str | None:
+    """Turn /fwd/https/host:port/v1/... into https://host:port/v1/..., else None."""
+    if not path.startswith(FORWARD_PREFIX):
+        return None
+    scheme, _, rest = path[len(FORWARD_PREFIX) :].partition("/")
+    if scheme not in ("http", "https") or not rest:
+        return None
+    return f"{scheme}://{rest}"
 
 
 class FileSystemProxy:
@@ -64,6 +79,9 @@ class FileSystemProxy:
             "headers": headers,
             "body": body.decode("utf-8") if body else None,
         }
+        url = forward_url(path)
+        if url:
+            request_data["url"] = url
 
         # Write request file (write to .tmp first, then rename for atomicity)
         req_file = self.requests_dir / f"{request_id}.json"
@@ -221,6 +239,9 @@ class StreamingProxyHTTPHandler(ProxyHTTPHandler):
             "body": body.decode("utf-8") if body else None,
             "stream": True,
         }
+        url = forward_url(self.path)
+        if url:
+            request_data["url"] = url
         req_file = self.proxy.requests_dir / f"{request_id}.json"
         tmp_file = self.proxy.requests_dir / f"{request_id}.tmp"
         with open(tmp_file, "w", encoding="utf-8") as f:
@@ -229,16 +250,19 @@ class StreamingProxyHTTPHandler(ProxyHTTPHandler):
         log.info(f"Streaming request {request_id} written")
 
         # Wait for meta file (contains real status code from upstream)
+        # or for a plain error response if the server failed the request
         meta_file = self.proxy.responses_dir / f"{request_id}-meta.json"
+        error_file = self.proxy.responses_dir / f"{request_id}.json"
         meta_start = time.monotonic()
         meta = None
         while time.monotonic() - meta_start < REQUEST_TIMEOUT:
-            if meta_file.exists():
+            found = next((p for p in (meta_file, error_file) if p.exists()), None)
+            if found:
                 time.sleep(0.05)
                 try:
-                    with open(meta_file, "r", encoding="utf-8") as f:
+                    with open(found, "r", encoding="utf-8") as f:
                         meta = json.load(f)
-                    meta_file.unlink(missing_ok=True)
+                    found.unlink(missing_ok=True)
                     break
                 except (json.JSONDecodeError, OSError):
                     time.sleep(0.1)
@@ -247,6 +271,39 @@ class StreamingProxyHTTPHandler(ProxyHTTPHandler):
         if meta is None:
             log.error(f"Stream {request_id} meta timed out")
             req_file.unlink(missing_ok=True)
+            self.send_response(504)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(
+                json.dumps(
+                    {
+                        "error": {
+                            "message": "Filesystem proxy timeout",
+                            "type": "timeout",
+                        }
+                    }
+                ).encode("utf-8")
+            )
+            return
+
+        if "body" in meta:
+            # Upstream answered without SSE (usually an error): pass it through
+            req_file.unlink(missing_ok=True)
+            done_file = self.proxy.responses_dir / f"{request_id}-done.json"
+            done_file.unlink(missing_ok=True)
+            self.send_response(meta.get("status_code", 502))
+            for k, v in meta.get("headers", {}).items():
+                if k.lower() not in (
+                    "transfer-encoding",
+                    "connection",
+                    "content-length",
+                    "content-encoding",
+                ):
+                    self.send_header(k, v)
+            payload = (meta["body"] or "").encode("utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
             return
 
         self.send_response(meta.get("status_code", 200))
@@ -323,7 +380,8 @@ def main():
     handler_class = StreamingProxyHTTPHandler if args.streaming else ProxyHTTPHandler
     handler_class.proxy = proxy
 
-    server = http.server.HTTPServer(("127.0.0.1", args.port), handler_class)
+    # Threaded: agents like opencode issue several requests concurrently
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", args.port), handler_class)
     log.info(f"Listening on http://127.0.0.1:{args.port}")
     log.info(
         f"Configure your AI agent with: OPENAI_API_BASE=http://127.0.0.1:{args.port}/v1"

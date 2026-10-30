@@ -62,6 +62,83 @@ set OPENAI_API_KEY=not-needed
 
 Or configure your agent directly with the base URL `http://127.0.0.1:8080/v1`.
 
+## Multiple upstream hosts (e.g. for opencode)
+
+The server can route to several upstream APIs. Each one gets a name, and requests are routed by the first path segment: `/<name>/v1/...` goes to that upstream (the prefix is stripped before forwarding).
+
+```cmd
+set FS_PROXY_KEY_CLOUD=sk-your-key
+python fs_proxy_server.py --queue-dir H:\queue ^
+    --upstream ollama=http://gpu-box:11434/v1 ^
+    --upstream cloud=https://llm.example.com/v1
+```
+
+- The API key for upstream `<name>` is read from the environment variable `FS_PROXY_KEY_<NAME>` (uppercased, non-alphanumerics become `_`). When set, it replaces any `Authorization` header the agent sends, so the agent can use a dummy key.
+- `--api-base` still works and acts as the fallback for paths that don't match an upstream name. Without `--api-base` and with at least one `--upstream`, unmatched paths get HTTP 404.
+- A duplicated `/v1` (base ending in `/v1` + path starting with `/v1/`) is collapsed.
+
+On the sandbox, run the client with `--streaming` (opencode streams its responses):
+
+```cmd
+python fs_proxy_client.py --queue-dir H:\queue --port 8080 --streaming
+```
+
+Then define one opencode provider per upstream in `opencode.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama (via fs-proxy)",
+      "options": { "baseURL": "http://127.0.0.1:8080/ollama/v1", "apiKey": "not-needed" },
+      "models": { "qwen2.5-coder:32b": {} }
+    },
+    "cloud": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Cloud LLM (via fs-proxy)",
+      "options": { "baseURL": "http://127.0.0.1:8080/cloud/v1", "apiKey": "not-needed" },
+      "models": { "gpt-4o": {} }
+    }
+  }
+}
+```
+
+## Client-chosen URLs (no server change per host)
+
+Instead of naming every upstream on the server, the agent can put the full upstream URL in its base URL:
+
+```text
+http://127.0.0.1:8080/fwd/<scheme>/<host[:port]>/<path>
+http://127.0.0.1:8080/fwd/https/llm.example.com/v1   ->  https://llm.example.com/v1
+```
+
+For security the server only forwards these to URLs matching an `--allow-url` prefix, set once when the server starts:
+
+```cmd
+python fs_proxy_server.py --queue-dir H:\queue ^
+    --allow-url https://llm.example.com/v1 ^
+    --allow-url http://10.0.0.5:11434/ ^
+    --allow-url https://*.domain.com/v1
+```
+
+- Scheme and `host[:port]` must match exactly, and the path must start at a segment boundary (`/v1` allows `/v1/chat/completions` but not `/v10` or `/admin`). A default port (`:443`, `:80`) can be written or left out.
+- `*.domain.com` matches any subdomain (`a.domain.com`, `a.b.domain.com`) but not `domain.com` itself; add that separately if needed. `--allow-url https://` allows any HTTPS host.
+- Without `--allow-url`, `/fwd/...` requests are refused with HTTP 403. Without it, anything in the sandbox that can write to the queue could make the proxy machine call any address it can reach.
+- No server-side API key is added for these requests: put the key in the agent config (opencode's `apiKey`), and the `Authorization` header is passed through.
+- Redirects are not followed for these requests, so an allowed host cannot redirect the proxy elsewhere.
+
+opencode provider example:
+
+```json
+"cloud": {
+  "npm": "@ai-sdk/openai-compatible",
+  "options": { "baseURL": "http://127.0.0.1:8080/fwd/https/llm.example.com/v1", "apiKey": "sk-your-key" },
+  "models": { "gpt-4o": {} }
+}
+```
+
 ## Testing
 
 Quick test from the sandbox with curl:
@@ -124,7 +201,9 @@ Files are written to `.tmp` first and then renamed. This prevents the other side
 | Flag                   | Default                     | Description                                                |
 |------------------------|-----------------------------|------------------------------------------------------------|
 | `--queue-dir`          | `H:\queue`                  | Shared drive queue directory                               |
-| `--api-base`           | `http://localhost:11434/v1` | Upstream AI model API URL                                  |
+| `--api-base`           | `http://localhost:11434/v1` | Default upstream API URL (no default if `--upstream` set)  |
+| `--upstream`           | none                        | `NAME=URL`, reached via `/NAME/...`; repeatable            |
+| `--allow-url`          | none                        | URL prefix the client may target via `/fwd/...`; repeatable |
 | `--api-key`            | `$OPENAI_API_KEY`           | API key for the upstream API                               |
 | `--cleanup-interval`   | `300`                       | Seconds between stale file cleanup                         |
 | `--ignore-cert-errors` | off                         | Disable TLS certificate verification for upstream requests |
