@@ -15,7 +15,7 @@ repos:
     hooks:
       - id: ruff
   - repo: https://github.com/betterleaks/betterleaks
-    rev: 22ae2f41a70d759e83e832a6a1b205fac729223b  # frozen: v2.0.0-rc.3
+    rev: 39d5bdcf34db54e944facac5cf6e8b03db5e2b99  # frozen: v1.10.1
     hooks:
       - id: betterleaks
   - repo: https://github.com/igorshubovych/markdownlint-cli
